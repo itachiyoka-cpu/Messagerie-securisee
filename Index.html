@@ -1,0 +1,334 @@
+# Messagerie-securisee
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Messagerie Lieutenant Meryl</title>
+<style>
+body{margin:0;font-family:Arial;background:linear-gradient(135deg,#111,#1c1c1c);color:white;height:100vh;display:flex;flex-direction:column;}
+.login-box{background:#161616;padding:30px;border-radius:15px;box-shadow:0 0 25px rgba(0,0,0,0.6);text-align:center;width:320px;}
+.badge{font-size:50px;margin-bottom:10px;}
+.subtitle{opacity:0.6;font-size:13px;}
+.greeting{margin-top:5px;font-weight:bold;color:white;}
+.status{margin:10px 0;font-size:13px;color:#00ff88;}
+.security-note{font-size:11px;opacity:0.4;margin-top:15px;color:white;}
+.error{color:#ff4d4d;font-size:12px;margin-top:10px;}
+input{padding:12px;margin:8px 0;border-radius:5px;border:none;width:100%;outline:none;}
+button{padding:12px;border:none;border-radius:5px;cursor:pointer;transition:0.3s;}
+button:hover{opacity:0.9;}
+#loginBtn{background:#25d366;color:white;width:100%;margin-top:10px;}
+#togglePassword{position:absolute;right:40px;top:188px;cursor:pointer;color:#fff;}
+#login{height:100vh;display:flex;justify-content:center;align-items:center;}
+#app{display:none;flex:1;flex-direction:column;height:100vh;}
+#header{background:#202c33;padding:15px;text-align:center;font-weight:bold;display:flex;justify-content:space-between;align-items:center;}
+#chat{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;scroll-behavior:smooth;}
+.message{padding:10px 14px 18px 14px;margin:5px 0;border-radius:15px;max-width:70%;word-wrap:break-word;font-size:14px;position:relative;}
+.sent{background:#005c4b;align-self:flex-end;color:white;}
+.received{background:#222;align-self:flex-start;color:white;}
+.message span.heure{font-size:11px;color:#ccc;opacity:0.8;position:absolute;bottom:4px;right:8px;}
+.message .actions{position:absolute;top:2px;right:2px;font-size:12px;}
+#messageBar{display:flex;padding:10px;background:#202c33;}
+#messageInput{flex:1;padding:12px;border-radius:25px;border:none;outline:none;}
+#sendBtn{margin-left:10px;background:#25d366;color:white;border-radius:50%;width:45px;height:45px;font-size:18px;}
+#adminZone{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:black;overflow:auto;padding:20px;z-index:100;}
+#userSelect{margin-bottom:10px;padding:8px;border-radius:5px;border:none;width:100%;display:none;}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login">
+<div class="login-box">
+<div class="badge">🛡️</div>
+<h2>🔐 Portail Sécurisé</h2>
+<p class="subtitle">Système de Communication Interne – Unité Officielle</p>
+<p id="heureMessage" class="greeting"></p>
+<div class="status">● Système opérationnel</div>
+<input type="text" id="prenom" placeholder="Prénom">
+<input type="text" id="nom" placeholder="Nom">
+<div style="position:relative;">
+<input type="password" id="password" placeholder="Mot de passe">
+<span id="togglePassword">👁️</span>
+</div>
+<button id="loginBtn">Connexion</button>
+<p class="security-note">Connexion surveillée • Accès journalisé</p>
+<p id="erreurMsg" class="error"></p>
+</div>
+</div>
+
+<!-- APP -->
+<div id="app">
+<div id="header">
+<span>Messagerie</span>
+<div>
+<button id="adminBtn" onclick="ouvrirAdmin()" style="display:none;">Admin</button>
+<button onclick="deconnexion()">Déconnexion</button>
+</div>
+</div>
+
+<select id="userSelect"></select>
+<div id="chat"></div>
+<div id="messageBar">
+<input id="messageInput" placeholder="Écrire un message...">
+<button id="sendBtn">➤</button>
+</div>
+</div>
+
+<!-- Admin -->
+<div id="adminZone"></div>
+
+<script>
+let currentUser=null, tentatives=0, bloque=false, selectedUser=null;
+let journalAdmin=[];
+let motsInterdits=[];
+
+// Charger la liste des 5000 mots interdits
+fetch("mots_interdits.json")
+.then(res=>res.json())
+.then(data=>{motsInterdits=data; console.log("Mots interdits chargés :", motsInterdits.length);})
+.catch(err=>console.error("Erreur chargement mots interdits :",err));
+
+// Heure dynamique
+let h=new Date().getHours();
+document.getElementById("heureMessage").innerText=(h<12)?"Bonjour Lieutenant.":(h<18)?"Bon après-midi Lieutenant.":"Bonsoir Lieutenant.";
+
+// Toggle mot de passe
+document.getElementById("togglePassword").addEventListener("click", ()=>{
+    const pwd=document.getElementById("password");
+    pwd.type=(pwd.type==="password")?"text":"password";
+});
+
+// Login
+document.getElementById("loginBtn").addEventListener("click", verifierAcces);
+
+// Clés et journal
+function getUserKey(prenom,nom){return "chat_"+prenom+"_"+nom;}
+function ajouterJournal(action, details="", type="info"){
+    if(currentUser && currentUser.prenom==="Meryl") return; // pas journaliser Meryl
+    const timestamp = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const utilisateur = currentUser ? currentUser.prenom+" "+currentUser.nom : "Inconnu";
+    journalAdmin.push({timestamp, user:utilisateur, action, details, type});
+}
+
+// Heure hh:mm
+function getHeureActuelle(){
+    const d=new Date();
+    let h=d.getHours(), m=d.getMinutes();
+    if(h<10) h="0"+h; if(m<10) m="0"+m;
+    return h+":"+m;
+}
+
+// Normaliser texte
+function normaliserTexte(texte){
+    texte = texte.toLowerCase();
+    texte = texte.normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+    texte = texte.replace(/[^a-z0-9\s]/g,"");
+    return texte;
+}
+
+// Vérification mots interdits
+function verifierMessageInterdit(message){
+    const texte = normaliserTexte(message);
+    for(let mot of motsInterdits){
+        if(texte.includes(normaliserTexte(mot))){
+            ajouterJournal("Message interdit", `Contenu: "${message}"`, "alerte");
+            return true;
+        }
+    }
+    return false;
+}
+
+// Vérification login
+function verifierAcces(){
+    if(bloque) return;
+    const prenom=document.getElementById("prenom").value.trim();
+    const nom=document.getElementById("nom").value.trim();
+    const pwd=document.getElementById("password").value;
+    const erreur=document.getElementById("erreurMsg");
+    if(!prenom||!nom||!pwd){erreur.innerText="Tous les champs doivent être remplis !"; return;}
+
+    if(prenom==="Meryl" && nom==="Itachi"){
+        if(pwd==="MerylSecret007"){
+            currentUser={prenom,nom};
+            document.getElementById("login").style.display="none";
+            document.getElementById("app").style.display="flex";
+            document.getElementById("adminBtn").style.display="inline-block";
+            afficherListeUtilisateurs();
+            document.getElementById("userSelect").style.display="block";
+            ajouterJournal("Connexion réussie - Lieutenant Meryl");
+        }else{erreur.innerText="Mot de passe incorrect pour Meryl ❌"; ajouterJournal("Tentative échouée - Meryl");}
+        return;
+    }
+
+    if(pwd==="1234"){
+        currentUser={prenom,nom};
+        document.getElementById("login").style.display="none";
+        document.getElementById("app").style.display="flex";
+        chargerMessages();
+        ajouterJournal("Connexion réussie", "", "info");
+    }else{
+        tentatives++;
+        ajouterJournal("Tentative échouée", "", "info");
+        if(tentatives>=3){
+            bloque=true;
+            erreur.innerText="Accès bloqué 30 secondes.";
+            document.getElementById("loginBtn").disabled=true;
+            setTimeout(()=>{bloque=false; tentatives=0; erreur.innerText=""; document.getElementById("loginBtn").disabled=false;},30000);
+        }else erreur.innerText=`Accès refusé ❌ (${tentatives}/3)`;
+    }
+}
+
+// Ajouter message à l'interface avec modification/suppression
+function ajouterMessageDiv(m,type){
+    const chat=document.getElementById("chat");
+    const div=document.createElement("div");
+    div.className="message "+type;
+    div.innerHTML=`${m.text}<span class="heure">${m.heure}</span>`;
+    
+    if(currentUser.prenom!=="Meryl"){
+        const actions=document.createElement("div");
+        actions.className="actions";
+        const editBtn=document.createElement("span"); editBtn.innerText="✏️";
+        editBtn.style.cursor="pointer";
+        editBtn.onclick=()=>{ 
+            const nv=prompt("Modifier le message:", m.text);
+            if(nv){ 
+                m.text=nv; 
+                localStorage.setItem(getUserKey(currentUser.prenom,currentUser.nom), JSON.stringify(JSON.parse(localStorage.getItem(getUserKey(currentUser.prenom,currentUser.nom))).map(msg=>msg===m?m:msg)));
+                div.innerHTML=`${m.text}<span class="heure">${m.heure}</span>`;
+                div.appendChild(actions);
+            }
+        };
+        const delBtn=document.createElement("span"); delBtn.innerText="🗑️"; delBtn.style.cursor="pointer"; delBtn.style.marginLeft="5px";
+        delBtn.onclick=()=>{
+            if(confirm("Supprimer ce message ?")){
+                const messages=JSON.parse(localStorage.getItem(getUserKey(currentUser.prenom,currentUser.nom)));
+                const idx=messages.indexOf(m);
+                if(idx>-1){messages.splice(idx,1); localStorage.setItem(getUserKey(currentUser.prenom,currentUser.nom), JSON.stringify(messages));}
+                div.remove();
+            }
+        };
+        actions.appendChild(editBtn); actions.appendChild(delBtn);
+        div.appendChild(actions);
+    }
+    
+    chat.appendChild(div);
+    chat.scrollTop=chat.scrollHeight;
+}
+
+// Envoyer message
+function envoyerMessage(){
+    const input=document.getElementById("messageInput");
+    const texte=input.value.trim();
+    if(!texte) return;
+    const heure=getHeureActuelle();
+
+    if(currentUser.prenom!=="Meryl"){ verifierMessageInterdit(texte); }
+
+    let key,type,from;
+    if(currentUser.prenom==="Meryl" && selectedUser){
+        key=getUserKey(selectedUser.prenom,selectedUser.nom); type="sent"; from="Meryl";
+    }else{
+        key=getUserKey(currentUser.prenom,currentUser.nom); type="sent"; from=currentUser.prenom;
+    }
+
+    const messages=JSON.parse(localStorage.getItem(key)||"[]");
+    const msgObj={type:type,text:texte,heure:heure,from:from,vu:false};
+    messages.push(msgObj);
+    localStorage.setItem(key,JSON.stringify(messages));
+
+    if(currentUser.prenom==="Meryl" && selectedUser){
+        chargerMessagesUtilisateur(selectedUser.prenom,selectedUser.nom);
+    }else{
+        chargerMessages();
+    }
+    input.value="";
+}
+
+// Envoi avec Enter
+document.getElementById("sendBtn").addEventListener("click",envoyerMessage);
+document.getElementById("messageInput").addEventListener("keydown",function(event){if(event.key==="Enter"){event.preventDefault(); envoyerMessage();}});
+
+// Charger messages utilisateur normal
+function chargerMessages(){
+    const key=getUserKey(currentUser.prenom,currentUser.nom);
+    const messages=JSON.parse(localStorage.getItem(key)||"[]");
+    const chat=document.getElementById("chat"); chat.innerHTML="";
+    messages.forEach(m=>{let type=(m.from===currentUser.prenom)?"sent":"received"; ajouterMessageDiv(m,type);});
+}
+
+// Meryl : liste utilisateurs
+function afficherListeUtilisateurs(){
+    const select=document.getElementById("userSelect"); select.innerHTML="";
+    let added=false;
+    for(let key in localStorage){
+        if(key.startsWith("chat_") && key!=="chat_Meryl_Itachi"){
+            const parts=key.replace("chat_","").split("_"); const prenom=parts[0], nom=parts[1];
+            const option=document.createElement("option"); option.value=prenom+"_"+nom; option.text=prenom+" "+nom; select.appendChild(option);
+            if(!added){selectedUser={prenom,nom}; added=true;}
+        }
+    }
+    select.onchange=function(){ const val=this.value.split("_"); selectedUser={prenom:val[0],nom:val[1]}; chargerMessagesUtilisateur(selectedUser.prenom,selectedUser.nom);}
+    if(selectedUser) chargerMessagesUtilisateur(selectedUser.prenom,selectedUser.nom);
+}
+
+// Meryl : charger messages utilisateur
+function chargerMessagesUtilisateur(prenom,nom){
+    selectedUser={prenom,nom};
+    const key=getUserKey(prenom,nom);
+    const messages=JSON.parse(localStorage.getItem(key)||"[]");
+    const chat=document.getElementById("chat"); chat.innerHTML="";
+    messages.forEach(m=>{let type=(m.from==="Meryl")?"sent":"received"; ajouterMessageDiv(m,type);});
+}
+
+// Admin intelligent : uniquement alertes + export + vider
+function ouvrirAdmin(){
+    const admin=document.getElementById("adminZone");
+    admin.style.display="block"; 
+    admin.innerHTML="<h2>Admin – Contrôle intelligent</h2>";
+
+    const journalDiv=document.createElement("div"); 
+    journalDiv.innerHTML="<h3>Alertes messages</h3>";
+    journalAdmin.forEach(j=>{const p=document.createElement("p"); p.innerText=`[${j.timestamp}] ${j.user} : ${j.action} ${j.details?'- '+j.details:''}`; journalDiv.appendChild(p);});
+    admin.appendChild(journalDiv);
+
+    // Exporter rapport
+    const exportBtn=document.createElement("button");
+    exportBtn.innerText="Exporter rapport";
+    exportBtn.style.marginTop="20px";
+    exportBtn.onclick=function(){
+        const blob=new Blob([journalAdmin.map(j=>`[${j.timestamp}] ${j.user} : ${j.action} ${j.details?'- '+j.details:''}`).join("\n")], {type:"text/plain;charset=utf-8"});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement("a"); a.href=url; a.download="rapport_programme.txt"; a.click();
+        URL.revokeObjectURL(url);
+    };
+    admin.appendChild(exportBtn);
+
+    // Vider l'historique
+    const viderBtn = document.createElement("button");
+    viderBtn.innerText = "Vider l'historique";
+    viderBtn.style.marginLeft = "10px";
+    viderBtn.onclick = function(){
+        if(confirm("Êtes-vous sûr de vouloir supprimer tout l'historique du journal ? Cette action est irréversible !")){
+            journalAdmin = [];
+            alert("Historique supprimé !");
+            ouvrirAdmin(); // rafraîchir l'affichage
+        }
+    };
+    admin.appendChild(viderBtn);
+}
+
+// Déconnexion
+function deconnexion(){
+    currentUser=null; selectedUser=null;
+    document.getElementById("app").style.display="none";
+    document.getElementById("login").style.display="flex";
+    document.getElementById("prenom").value="";
+    document.getElementById("nom").value="";
+    document.getElementById("password").value="";
+    document.getElementById("userSelect").style.display="none";
+}
+</script>
+</body>
+</html>
